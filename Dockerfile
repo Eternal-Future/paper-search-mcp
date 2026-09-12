@@ -37,7 +37,7 @@ ENV PAPER_SEARCH_MCP_AUTH_TOKEN=""
 EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD-SHELL python -c "import os, urllib.request; p = os.environ.get('PAPER_SEARCH_MCP_PORT') or os.environ.get('PORT') or '8000'; urllib.request.urlopen('http://127.0.0.1:' + p + '/health', timeout=3)"
+    CMD python -c "import os, urllib.request; p = os.environ.get('PAPER_SEARCH_MCP_PORT') or os.environ.get('PORT') or '8000'; urllib.request.urlopen('http://127.0.0.1:' + p + '/health', timeout=3)"
 
 # Use the entry point script
 CMD ["paper-search-mcp"]
