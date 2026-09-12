@@ -517,6 +517,13 @@ Configuration notes:
 - `PAPER_SEARCH_MCP_AUTH_TOKEN` — required in HTTP mode. Prefer platform secret
   injection over plain environment variables. Alternatively mount a secret file and
   point `PAPER_SEARCH_MCP_AUTH_TOKEN_FILE=/run/secrets/auth_token` at it.
+- `PAPER_SEARCH_MCP_HTTP_STATELESS` — default `true`. Each POST is handled
+  independently: no in-memory sessions, no `Mcp-Session-Id` bookkeeping, and no
+  `initialize` handshake required. This makes the endpoint safe behind
+  gateways/proxies (e.g. a Cloudflare Workers aggregator forwaring `tools/call`),
+  load-balanced replicas, and container restarts — a stale session id can never
+  produce `Session not found`. Set it to `false` only if a specific client
+  requires persistent sessions.
 - `PAPER_SEARCH_MCP_HOST` (default `127.0.0.1`; the Docker image sets `0.0.0.0`)
   and `PAPER_SEARCH_MCP_PORT` (default `8000`). A bare `PORT` variable injected by
   the platform (Railway, Heroku, ...) is honoured as a fallback.

@@ -71,6 +71,25 @@ def _resolve_port() -> int:
         return 8000
 
 
+def _resolve_http_stateless() -> bool:
+    """Stateless HTTP mode: every POST is independent, so no session can go stale.
+
+    This is the robust default for container platforms and gateway/proxy
+    deployments (no in-memory sessions survive restarts or load-balanced
+    replicas). Set PAPER_SEARCH_MCP_HTTP_STATELESS=false to restore persistent
+    sessions for clients that need them.
+    """
+    raw = get_env("HTTP_STATELESS", "true").strip().lower()
+    if raw in ("", "1", "true", "yes", "on"):
+        return True
+    if raw in ("0", "false", "no", "off"):
+        return False
+    logger.warning(
+        "Invalid PAPER_SEARCH_MCP_HTTP_STATELESS=%r; defaulting to true", raw
+    )
+    return True
+
+
 _auth_token = _resolve_auth_token()
 
 # The SDK requires AuthSettings alongside a token_verifier. These URLs are only
@@ -97,6 +116,7 @@ mcp = FastMCP(
     "paper_search_server",
     host=get_env("HOST", "127.0.0.1"),
     port=_resolve_port(),
+    stateless_http=_resolve_http_stateless(),
     auth=(
         AuthSettings(
             issuer_url=_AUTH_ISSUER_URL,

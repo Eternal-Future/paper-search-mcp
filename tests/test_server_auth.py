@@ -51,3 +51,26 @@ def test_resolve_transport_rejects_unknown(monkeypatch):
     monkeypatch.setattr(server, "get_env", lambda name, default="": "sse")
     with pytest.raises(ValueError):
         server.resolve_transport()
+
+
+@pytest.mark.parametrize(
+    "env_value,expected",
+    [
+        ("true", True),
+        ("TRUE", True),
+        ("1", True),
+        ("yes", True),
+        ("on", True),
+        ("", True),
+        ("false", False),
+        ("0", False),
+        ("no", False),
+        ("off", False),
+        ("garbage", True),
+    ],
+)
+def test_resolve_http_stateless(monkeypatch, env_value, expected):
+    monkeypatch.setattr(
+        server, "get_env", lambda name, default="": env_value if name == "HTTP_STATELESS" else default
+    )
+    assert server._resolve_http_stateless() is expected
