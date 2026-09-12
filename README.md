@@ -374,10 +374,15 @@ npx -y @smithery/cli run @openags/paper-search-mcp
 ```bash
 docker build -t paper-search-mcp .
 docker run --rm -i \
+  -e PAPER_SEARCH_MCP_TRANSPORT=stdio \
   -e PAPER_SEARCH_MCP_UNPAYWALL_EMAIL=your@email.com \
   -e PAPER_SEARCH_MCP_CORE_API_KEY=your_core_key \
   paper-search-mcp
 ```
+
+> The image itself defaults to `streamable-http` mode (see Method 8 for container
+> platform deployments). Set `PAPER_SEARCH_MCP_TRANSPORT=stdio` as above to keep
+> the classic stdin/stdout mode used by desktop clients.
 
 **Claude Desktop config:**
 
@@ -388,6 +393,7 @@ docker run --rm -i \
       "command": "docker",
       "args": ["run", "--rm", "-i", "paper-search-mcp"],
       "env": {
+        "PAPER_SEARCH_MCP_TRANSPORT": "stdio",
         "PAPER_SEARCH_MCP_UNPAYWALL_EMAIL": "your@email.com",
         "PAPER_SEARCH_MCP_CORE_API_KEY": "",
         "PAPER_SEARCH_MCP_SEMANTIC_SCHOLAR_API_KEY": "",
@@ -459,6 +465,64 @@ For active development, optionally install an editable copy:
 uv venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
 uv pip install -e ".[dev]"
 ```
+
+---
+
+### Method 8 — Streamable HTTP (container platform deployment)
+
+For hosting on any container platform (Railway, Fly.io, Render, Kubernetes, ...) the
+server can run as an HTTP endpoint. Every request must carry a pre-shared bearer
+token — in HTTP mode the server refuses to start without one.
+
+```bash
+docker build -t paper-search-mcp .
+docker run --rm -p 8000:8000 \
+  -e PAPER_SEARCH_MCP_AUTH_TOKEN="$(openssl rand -hex 32)" \
+  -e PAPER_SEARCH_MCP_UNPAYWALL_EMAIL=your@email.com \
+  paper-search-mcp
+```
+
+The MCP endpoint is `http://<host>:8000/mcp` and requires the
+`Authorization: Bearer <token>` header on every request. Quick smoke test:
+
+```bash
+# health probe — the only route that does not require a token
+curl http://localhost:8000/health
+# no / wrong token → 401
+curl -i --data '{}' http://localhost:8000/mcp
+# authenticated MCP initialize → 200
+curl -i -X POST http://localhost:8000/mcp \
+  -H 'Authorization: Bearer <token>' \
+  -H 'Content-Type: application/json' \
+  -H 'Accept: application/json, text/event-stream' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"curl","version":"0.1"}}}'
+```
+
+Client-side config for MCP clients that support remote HTTP servers:
+
+```json
+{
+  "mcpServers": {
+    "paper-search-mcp": {
+      "type": "http",
+      "url": "http://your-host:8000/mcp",
+      "headers": { "Authorization": "Bearer <token>" }
+    }
+  }
+}
+```
+
+Configuration notes:
+
+- `PAPER_SEARCH_MCP_AUTH_TOKEN` — required in HTTP mode. Prefer platform secret
+  injection over plain environment variables. Alternatively mount a secret file and
+  point `PAPER_SEARCH_MCP_AUTH_TOKEN_FILE=/run/secrets/auth_token` at it.
+- `PAPER_SEARCH_MCP_HOST` (default `127.0.0.1`; the Docker image sets `0.0.0.0`)
+  and `PAPER_SEARCH_MCP_PORT` (default `8000`). A bare `PORT` variable injected by
+  the platform (Railway, Heroku, ...) is honoured as a fallback.
+- Only `/health` is reachable without a token; the `/mcp` endpoint always requires
+  one.
+- Terminate TLS at the platform edge (load balancer / reverse proxy) in production.
 
 ---
 

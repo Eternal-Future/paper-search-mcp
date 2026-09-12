@@ -952,6 +952,7 @@ dependencies = [
     { name = "mcp", extra = ["cli"] },
     { name = "pypdf" },
     { name = "requests" },
+    { name = "starlette" },
 ]
 
 [package.optional-dependencies]
@@ -966,10 +967,11 @@ requires-dist = [
     { name = "feedparser" },
     { name = "httpx", extras = ["socks"], specifier = ">=0.28.1" },
     { name = "lxml", specifier = ">=4.9.0" },
-    { name = "mcp", extras = ["cli"], specifier = ">=1.6.0" },
+    { name = "mcp", extras = ["cli"], specifier = ">=1.26.0" },
     { name = "pypdf" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
     { name = "requests" },
+    { name = "starlette", specifier = ">=0.37" },
 ]
 provides-extras = ["dev"]
 

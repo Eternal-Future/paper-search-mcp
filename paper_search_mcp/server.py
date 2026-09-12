@@ -4,8 +4,16 @@ import asyncio
 import os
 import logging
 import re
+import secrets
+from pathlib import Path
+
 import httpx
+from mcp.server.auth.provider import AccessToken
+from mcp.server.auth.settings import AuthSettings
 from mcp.server.fastmcp import FastMCP
+from starlette.requests import Request
+from starlette.responses import JSONResponse
+
 from .config import get_env
 from .academic_platforms.arxiv import ArxivSearcher
 from .academic_platforms.pubmed import PubMedSearcher
@@ -34,9 +42,75 @@ from .utils import extract_doi
 # from .academic_platforms.hub import SciHubSearcher
 from .paper import Paper
 
-# Initialize MCP server
-mcp = FastMCP("paper_search_server")
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Streamable HTTP server configuration
+# Applicable when PAPER_SEARCH_MCP_TRANSPORT=streamable-http (container mode).
+# ---------------------------------------------------------------------------
+def _resolve_auth_token() -> str:
+    token = get_env("AUTH_TOKEN", "").strip()
+    if not token:
+        token_file = get_env("AUTH_TOKEN_FILE", "").strip()
+        if token_file:
+            try:
+                token = Path(token_file).expanduser().read_text(encoding="utf-8").strip()
+            except OSError as exc:
+                logger.warning("Failed to read auth token file %s: %s", token_file, exc)
+    return token
+
+
+def _resolve_port() -> int:
+    raw_port = get_env("PORT", "8000")
+    try:
+        return int(raw_port)
+    except ValueError:
+        logger.warning("Invalid PAPER_SEARCH_MCP_PORT=%r; falling back to 8000", raw_port)
+        return 8000
+
+
+_auth_token = _resolve_auth_token()
+
+# The SDK requires AuthSettings alongside a token_verifier. These URLs are only
+# surfaced in the OAuth protected-resource metadata route and the 401 challenge
+# header; no OAuth flow is configured (bearer token only), so placeholders are fine.
+_AUTH_ISSUER_URL = "https://paper-search-mcp.invalid/issuer"
+_AUTH_RESOURCE_SERVER_URL = "https://paper-search-mcp.invalid"
+
+
+class StaticTokenVerifier:
+    """Accepts exactly one pre-shared bearer token (PAPER_SEARCH_MCP_AUTH_TOKEN)."""
+
+    def __init__(self, expected_token: str):
+        self._expected_token = expected_token
+
+    async def verify_token(self, token: str) -> Optional[AccessToken]:
+        if not token or not secrets.compare_digest(token, self._expected_token):
+            return None
+        return AccessToken(token=token, client_id="paper-search-mcp", scopes=[])
+
+
+# Initialize MCP server
+mcp = FastMCP(
+    "paper_search_server",
+    host=get_env("HOST", "127.0.0.1"),
+    port=_resolve_port(),
+    auth=(
+        AuthSettings(
+            issuer_url=_AUTH_ISSUER_URL,
+            resource_server_url=_AUTH_RESOURCE_SERVER_URL,
+        )
+        if _auth_token
+        else None
+    ),
+    token_verifier=StaticTokenVerifier(_auth_token) if _auth_token else None,
+)
+
+
+@mcp.custom_route("/health", methods=["GET"])
+async def health_check(request: Request) -> JSONResponse:
+    return JSONResponse({"status": "ok"})
 
 # Instances of searchers
 arxiv_searcher = ArxivSearcher()
@@ -1376,8 +1450,27 @@ if acm_searcher is not None:
         return acm_searcher.read_paper(paper_id, save_path)
 
 
+def resolve_transport() -> str:
+    """Pick the run transport from PAPER_SEARCH_MCP_TRANSPORT (default: stdio)."""
+    transport = get_env("TRANSPORT", "stdio").strip().lower() or "stdio"
+    if transport not in ("stdio", "streamable-http"):
+        raise ValueError(f"unknown transport {transport!r} (expected 'stdio' or 'streamable-http')")
+    return transport
+
+
 def main():
-    mcp.run(transport="stdio")
+    try:
+        transport = resolve_transport()
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
+
+    if transport == "streamable-http" and not _auth_token:
+        raise SystemExit(
+            "streamable-http transport requires PAPER_SEARCH_MCP_AUTH_TOKEN "
+            "(or PAPER_SEARCH_MCP_AUTH_TOKEN_FILE) to be set"
+        )
+
+    mcp.run(transport=transport)
 
 
 if __name__ == "__main__":
