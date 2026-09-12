@@ -9,7 +9,7 @@ import json
 import sys
 from typing import Any, Dict, List
 
-from .config import get_env
+from .config import get_env, disabled_sources
 from .academic_platforms.arxiv import ArxivSearcher
 from .academic_platforms.pubmed import PubMedSearcher
 from .academic_platforms.biorxiv import BioRxivSearcher
@@ -88,10 +88,11 @@ ALL_SOURCES = [
 
 
 def _parse_sources(sources: str) -> List[str]:
+    disabled = disabled_sources()
     if not sources or sources.strip().lower() == "all":
-        return [s for s in ALL_SOURCES if s in SEARCHERS]
+        return [s for s in ALL_SOURCES if s in SEARCHERS and s not in disabled]
     normalized = [p.strip().lower() for p in sources.split(",") if p.strip()]
-    return [s for s in normalized if s in SEARCHERS]
+    return [s for s in normalized if s in SEARCHERS and s not in disabled]
 
 
 def _paper_unique_key(paper: Dict[str, Any]) -> str:

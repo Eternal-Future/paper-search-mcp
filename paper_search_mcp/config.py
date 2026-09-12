@@ -80,3 +80,9 @@ def get_env(name: str, default: Optional[str] = "") -> str:
             return os.environ.get(key, "")
 
     return "" if default is None else str(default)
+
+
+def disabled_sources() -> set[str]:
+    """Source names disabled via PAPER_SEARCH_MCP_DISABLED_SOURCES (comma-separated)."""
+    raw = get_env("DISABLED_SOURCES", "")
+    return {part.strip().lower() for part in raw.split(",") if part.strip()}

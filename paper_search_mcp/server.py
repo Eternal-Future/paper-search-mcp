@@ -1,8 +1,9 @@
 # paper_search_mcp/server.py
 from typing import List, Dict, Optional, Any
 import asyncio
-import os
+import functools
 import logging
+import os
 import re
 import secrets
 from pathlib import Path
@@ -14,7 +15,7 @@ from mcp.server.fastmcp import FastMCP
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-from .config import get_env
+from .config import get_env, disabled_sources
 from .academic_platforms.arxiv import ArxivSearcher
 from .academic_platforms.pubmed import PubMedSearcher
 from .academic_platforms.biorxiv import BioRxivSearcher
@@ -200,12 +201,63 @@ else:
     acm_searcher = None
 
 
+# ---------------------------------------------------------------------------
+# Optional platform disabling
+# Set PAPER_SEARCH_MCP_DISABLED_SOURCES to a comma-separated list of source
+# names (e.g. "zenodo,hal") to skip those platforms' searches entirely.
+# ---------------------------------------------------------------------------
+_disabled_sources = disabled_sources()
+if _disabled_sources:
+    logger.info(
+        "Sources disabled via PAPER_SEARCH_MCP_DISABLED_SOURCES: %s",
+        ", ".join(sorted(_disabled_sources)),
+    )
+
+AVAILABLE_SOURCES = [source for source in ALL_SOURCES if source not in _disabled_sources]
+
+# Built with a plain string so the "Available" list reflects disabled platforms;
+# an f-string would not count as a docstring and FastMCP would drop the description.
+SEARCH_PAPERS_DESCRIPTION = (
+    "Unified top-level search across all configured academic platforms.\n\n"
+    "    Args:\n"
+    "        query: Search query string.\n"
+    "        max_results_per_source: Max results to fetch from each selected source.\n"
+    "        sources: Comma-separated source names or 'all'.\n"
+    f"            Available: {', '.join(AVAILABLE_SOURCES)}\n"
+    "        year: Optional year filter for Semantic Scholar only.\n"
+    "    Returns:\n"
+    "        Aggregated dictionary with per-source stats, errors, and deduplicated papers.\n"
+    "    "
+)
+
+
+def _guard_disabled(source: str):
+    """Return a wrapper that refuses to run searches for a disabled platform."""
+
+    def decorator(func):
+        @functools.wraps(func)
+        async def wrapper(*args, **kwargs):
+            if source in _disabled_sources:
+                raise RuntimeError(
+                    f"Source '{source}' is disabled via "
+                    "PAPER_SEARCH_MCP_DISABLED_SOURCES; search not executed."
+                )
+            return await func(*args, **kwargs)
+
+        return wrapper
+
+    return decorator
+
+
 def _parse_sources(sources: str) -> List[str]:
     if not sources or sources.strip().lower() == "all":
-        return ALL_SOURCES
+        selected = list(ALL_SOURCES)
+    else:
+        normalized = [part.strip().lower() for part in sources.split(",") if part.strip()]
+        selected = [source for source in normalized if source in ALL_SOURCES]
 
-    normalized = [part.strip().lower() for part in sources.split(",") if part.strip()]
-    return [source for source in normalized if source in ALL_SOURCES]
+    # Drop platforms disabled via PAPER_SEARCH_MCP_DISABLED_SOURCES.
+    return [source for source in selected if source not in _disabled_sources]
 
 
 def _paper_unique_key(paper: Dict[str, Any]) -> str:
@@ -313,24 +365,14 @@ async def _try_repository_fallback(doi: str, title: str, save_path: str) -> tupl
     return None, "; ".join(repository_errors)
 
 
-@mcp.tool()
+@mcp.tool(description=SEARCH_PAPERS_DESCRIPTION)
 async def search_papers(
     query: str,
     max_results_per_source: int = 5,
     sources: str = "all",
     year: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Unified top-level search across all configured academic platforms.
-
-    Args:
-        query: Search query string.
-        max_results_per_source: Max results to fetch from each selected source.
-        sources: Comma-separated source names or 'all'.
-            Available: arxiv,pubmed,biorxiv,medrxiv,google_scholar,iacr,semantic,crossref,openalex,pmc,core,europepmc,dblp,openaire,citeseerx,doaj,base,zenodo,hal,ssrn,unpaywall
-        year: Optional year filter for Semantic Scholar only.
-    Returns:
-        Aggregated dictionary with per-source stats, errors, and deduplicated papers.
-    """
+    """Unified top-level search across all configured academic platforms."""
     selected_sources = _parse_sources(sources)
 
     if not selected_sources:
@@ -430,6 +472,7 @@ async def search_papers(
 
 # Tool definitions
 @mcp.tool()
+@_guard_disabled("arxiv")
 async def search_arxiv(query: str, max_results: int = 10, sort_by: str = 'relevance', sort_order: str = 'descending') -> List[Dict]:
     """Search academic papers from arXiv.
 
@@ -446,6 +489,7 @@ async def search_arxiv(query: str, max_results: int = 10, sort_by: str = 'releva
 
 
 @mcp.tool()
+@_guard_disabled("pubmed")
 async def search_pubmed(query: str, max_results: int = 10, sort: str = 'relevance') -> List[Dict]:
     """Search academic papers from PubMed.
 
@@ -461,6 +505,7 @@ async def search_pubmed(query: str, max_results: int = 10, sort: str = 'relevanc
 
 
 @mcp.tool()
+@_guard_disabled("biorxiv")
 async def search_biorxiv(query: str, max_results: int = 10) -> List[Dict]:
     """Search academic papers from bioRxiv.
 
@@ -479,6 +524,7 @@ async def search_biorxiv(query: str, max_results: int = 10) -> List[Dict]:
 
 
 @mcp.tool()
+@_guard_disabled("medrxiv")
 async def search_medrxiv(query: str, max_results: int = 10) -> List[Dict]:
     """Search academic papers from medRxiv.
 
@@ -497,6 +543,7 @@ async def search_medrxiv(query: str, max_results: int = 10) -> List[Dict]:
 
 
 @mcp.tool()
+@_guard_disabled("google_scholar")
 async def search_google_scholar(query: str, max_results: int = 10) -> List[Dict]:
     """Search academic papers from Google Scholar.
 
@@ -511,6 +558,7 @@ async def search_google_scholar(query: str, max_results: int = 10) -> List[Dict]
 
 
 @mcp.tool()
+@_guard_disabled("iacr")
 async def search_iacr(
     query: str, max_results: int = 10, fetch_details: bool = True
 ) -> List[Dict]:
@@ -677,6 +725,7 @@ async def read_iacr_paper(paper_id: str, save_path: str = "./downloads") -> str:
 
 
 @mcp.tool()
+@_guard_disabled("semantic")
 async def search_semantic(query: str, year: Optional[str] = None, max_results: int = 10) -> List[Dict]:
     """Search academic papers from Semantic Scholar.
 
@@ -741,6 +790,7 @@ async def read_semantic_paper(paper_id: str, save_path: str = "./downloads") -> 
 
 
 @mcp.tool()
+@_guard_disabled("crossref")
 async def search_crossref(
     query: str,
     max_results: int = 10,
@@ -938,6 +988,7 @@ async def read_crossref_paper(paper_id: str, save_path: str = "./downloads") -> 
 
 
 @mcp.tool()
+@_guard_disabled("openalex")
 async def search_openalex(query: str, max_results: int = 10) -> List[Dict]:
     """Search academic papers from OpenAlex.
 
@@ -952,6 +1003,7 @@ async def search_openalex(query: str, max_results: int = 10) -> List[Dict]:
 
 
 @mcp.tool()
+@_guard_disabled("pmc")
 async def search_pmc(query: str, max_results: int = 10) -> List[Dict]:
     """Search academic papers from PubMed Central (PMC).
 
@@ -966,6 +1018,7 @@ async def search_pmc(query: str, max_results: int = 10) -> List[Dict]:
 
 
 @mcp.tool()
+@_guard_disabled("core")
 async def search_core(query: str, max_results: int = 10) -> List[Dict]:
     """Search academic papers from CORE.
 
@@ -980,6 +1033,7 @@ async def search_core(query: str, max_results: int = 10) -> List[Dict]:
 
 
 @mcp.tool()
+@_guard_disabled("europepmc")
 async def search_europepmc(query: str, max_results: int = 10) -> List[Dict]:
     """Search academic papers from Europe PMC.
 
@@ -994,6 +1048,7 @@ async def search_europepmc(query: str, max_results: int = 10) -> List[Dict]:
 
 
 @mcp.tool()
+@_guard_disabled("dblp")
 async def search_dblp(query: str, max_results: int = 10) -> List[Dict]:
     """Search academic papers from dblp computer science bibliography.
 
@@ -1008,6 +1063,7 @@ async def search_dblp(query: str, max_results: int = 10) -> List[Dict]:
 
 
 @mcp.tool()
+@_guard_disabled("openaire")
 async def search_openaire(query: str, max_results: int = 10) -> List[Dict]:
     """Search academic papers from OpenAIRE European Open Access infrastructure.
 
@@ -1022,6 +1078,7 @@ async def search_openaire(query: str, max_results: int = 10) -> List[Dict]:
 
 
 @mcp.tool()
+@_guard_disabled("citeseerx")
 async def search_citeseerx(query: str, max_results: int = 10) -> List[Dict]:
     """Search academic papers from CiteSeerX digital library.
 
@@ -1036,6 +1093,7 @@ async def search_citeseerx(query: str, max_results: int = 10) -> List[Dict]:
 
 
 @mcp.tool()
+@_guard_disabled("doaj")
 async def search_doaj(query: str, max_results: int = 10) -> List[Dict]:
     """Search academic papers from DOAJ (Directory of Open Access Journals).
 
@@ -1050,6 +1108,7 @@ async def search_doaj(query: str, max_results: int = 10) -> List[Dict]:
 
 
 @mcp.tool()
+@_guard_disabled("base")
 async def search_base(query: str, max_results: int = 10) -> List[Dict]:
     """Search academic papers from BASE (Bielefeld Academic Search Engine).
 
@@ -1064,6 +1123,7 @@ async def search_base(query: str, max_results: int = 10) -> List[Dict]:
 
 
 @mcp.tool()
+@_guard_disabled("zenodo")
 async def search_zenodo(query: str, max_results: int = 10) -> List[Dict]:
     """Search academic papers from Zenodo open repository.
 
@@ -1078,6 +1138,7 @@ async def search_zenodo(query: str, max_results: int = 10) -> List[Dict]:
 
 
 @mcp.tool()
+@_guard_disabled("hal")
 async def search_hal(query: str, max_results: int = 10) -> List[Dict]:
     """Search academic papers from HAL open archive.
 
@@ -1092,6 +1153,7 @@ async def search_hal(query: str, max_results: int = 10) -> List[Dict]:
 
 
 @mcp.tool()
+@_guard_disabled("ssrn")
 async def search_ssrn(query: str, max_results: int = 10) -> List[Dict]:
     """Search metadata records from SSRN.
 
@@ -1108,6 +1170,7 @@ async def search_ssrn(query: str, max_results: int = 10) -> List[Dict]:
 
 
 @mcp.tool()
+@_guard_disabled("unpaywall")
 async def search_unpaywall(query: str, max_results: int = 10) -> List[Dict]:
     """Lookup a DOI via Unpaywall and return OA metadata.
 
@@ -1373,6 +1436,7 @@ async def download_openalex(paper_id: str, save_path: str = "./downloads") -> st
 # ---------------------------------------------------------------------------
 if ieee_searcher is not None:
     @mcp.tool()
+    @_guard_disabled("ieee")
     async def search_ieee(query: str, max_results: int = 10) -> List[Dict]:
         """Search IEEE Xplore for papers.  Requires PAPER_SEARCH_MCP_IEEE_API_KEY (or IEEE_API_KEY).
 
@@ -1414,6 +1478,7 @@ if ieee_searcher is not None:
 # ---------------------------------------------------------------------------
 if acm_searcher is not None:
     @mcp.tool()
+    @_guard_disabled("acm")
     async def search_acm(query: str, max_results: int = 10) -> List[Dict]:
         """Search ACM Digital Library for papers.  Requires PAPER_SEARCH_MCP_ACM_API_KEY (or ACM_API_KEY).
 

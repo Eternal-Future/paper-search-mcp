@@ -549,6 +549,15 @@ PAPER_SEARCH_MCP_ACM_API_KEY=
 
 To use a custom path: `export PAPER_SEARCH_MCP_ENV_FILE=/absolute/path/to/.env`
 
+To disable specific platforms entirely, set a comma-separated list — those
+platforms' searches are skipped (`search_papers` excludes them, and their
+individual `search_<source>` tools return a "disabled" message instead of
+executing):
+
+```bash
+export PAPER_SEARCH_MCP_DISABLED_SOURCES=zenodo,hal
+```
+
 > Legacy variable names without the `PAPER_SEARCH_MCP_` prefix (e.g. `CORE_API_KEY`, `UNPAYWALL_EMAIL`) are still supported for backward compatibility.
 
 ---

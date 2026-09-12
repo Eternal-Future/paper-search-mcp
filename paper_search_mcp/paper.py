@@ -3,6 +3,16 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import List, Dict, Optional
 
+
+def _date_to_str(value) -> str:
+    """Serialize a datetime/date/str date value safely for JSON output."""
+    if value is None:
+        return ""
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    return str(value)
+
+
 @dataclass
 class Paper:
     """Standardized paper format with core fields for academic sources"""
@@ -46,11 +56,11 @@ class Paper:
             'authors': '; '.join(self.authors) if self.authors else '',
             'abstract': self.abstract,
             'doi': self.doi,
-            'published_date': self.published_date.isoformat() if self.published_date else '',
+            'published_date': _date_to_str(self.published_date),
             'pdf_url': self.pdf_url,
             'url': self.url,
             'source': self.source,
-            'updated_date': self.updated_date.isoformat() if self.updated_date else '',
+            'updated_date': _date_to_str(self.updated_date),
             'categories': '; '.join(self.categories) if self.categories else '',
             'keywords': '; '.join(self.keywords) if self.keywords else '',
             'citations': self.citations,
